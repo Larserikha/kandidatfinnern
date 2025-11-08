@@ -179,7 +179,10 @@ def main():
         print("📝 Next steps:")
         print("  1. Restart Claude Desktop / ChatGPT Desktop")
         print("  2. The cv-rag MCP server should now be available")
-        print("  3. Test by asking: 'List all candidates' or 'Search for candidates with Azure experience'")
+        print("  3. ⚠️  KRITISK: Copy agent knowledge file to your project's agent knowledge/ folder:")
+        print(f"      cp {project_path}/.rules/cv-rag-system.mdc [din-project-mappe]/agent\\ knowledge/")
+        print("      (Se README.md for detaljerte instruksjoner)")
+        print("  4. Test by asking: 'List all candidates' or 'Search for candidates with Azure experience'")
     else:
         print("⚠️  No MCP config files found")
         print()

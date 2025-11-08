@@ -91,6 +91,29 @@ Dette scriptet:
 - ✅ Oppretter backup hvis det trengs
 - ✅ Fungerer på macOS, Linux og Windows
 
+**KRITISK - Agent knowledge-fil:**
+
+For å få gode søkeresultater i Claude Desktop eller ChatGPT Desktop, **må du kopiere agent knowledge-filen manuelt** til din spesifikke agent/project-mappe.
+
+**Du må kopiere filen manuelt:**
+Vi vet ikke hvilken agent/project du bruker, så du må kopiere filen selv:
+
+```bash
+# For Claude Desktop
+cp .rules/cv-rag-system.mdc ~/Library/Application\ Support/Claude/projects/[ditt-project-navn]/agent\ knowledge/
+
+# For ChatGPT Desktop
+cp .rules/cv-rag-system.mdc ~/Library/Application\ Support/OpenAI/ChatGPT/projects/[ditt-project-navn]/agent\ knowledge/
+```
+
+**Hvorfor dette er viktig:**
+- Filen inneholder kritiske instruksjoner om hvordan systemet fungerer
+- Den forklarer semantisk søk (ikke keyword-matching)
+- Den inneholder best practices for anbudsarbeid
+- Den gir forretningsmessige vurderinger om erfaring og salgbarhet
+
+**Merk:** Hvis du bruker Cursor, legges filen automatisk til fra `.rules/` mappen.
+
 **Manuelt oppsett (hvis automatisk ikke fungerer):**
 
 **For Claude Desktop:**

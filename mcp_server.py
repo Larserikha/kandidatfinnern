@@ -113,14 +113,39 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="list_all_candidates",
             description=(
-                "Get a complete overview of all candidates in the database with their names and departments. "
+                "Get a complete overview of all candidates in the database with their names, departments, and years of experience. "
                 "Use this to get a high-level view before doing detailed searches. "
-                "Returns a list of all available CVs with metadata."
+                "Returns a list of all available CVs with metadata including years_of_experience."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {},
                 "required": []
+            }
+        ),
+        Tool(
+            name="get_candidates_metadata",
+            description=(
+                "Get metadata (name, office, years of experience, source) for multiple candidates at once. "
+                "Much more efficient than calling get_cv_by_name() multiple times. "
+                "Provide a list of candidate names or source filenames. "
+                "Useful when you have a list of candidates and need to quickly check their experience levels."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "candidates": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": (
+                            "List of candidate names or source filenames (e.g., ['Ola Nordmann', 'kari-hansen.json']). "
+                            "Can mix names and source filenames."
+                        )
+                    }
+                },
+                "required": ["candidates"]
             }
         )
     ]
@@ -185,18 +210,20 @@ Collection: {stats['collection_name']}
                 include=['metadatas']
             )
             
-            # Extract unique candidates
+            # Extract unique candidates with all metadata
             candidates = {}
             for metadata in all_results['metadatas']:
                 name = metadata.get('cv_name', 'Unknown')
                 office = metadata.get('office', 'Unknown')
                 source = metadata.get('source', '')
+                years_exp = metadata.get('years_of_experience')
                 
                 if name not in candidates:
                     candidates[name] = {
                         'name': name,
                         'office': office,
-                        'source': source
+                        'source': source,
+                        'years_of_experience': years_exp
                     }
             
             # Format response
@@ -212,19 +239,109 @@ Total candidates: {len(candidates)}
                 office = candidate['office'] or 'Unknown'
                 if office not in by_office:
                     by_office[office] = []
-                by_office[office].append(candidate['name'])
+                by_office[office].append(candidate)
             
-            for office, names in sorted(by_office.items()):
-                response += f"\n{office} ({len(names)} candidates):\n"
-                for name in sorted(names):
-                    response += f"  • {name}\n"
+            for office, candidate_list in sorted(by_office.items()):
+                response += f"\n{office} ({len(candidate_list)} candidates):\n"
+                for candidate in sorted(candidate_list, key=lambda x: x['name']):
+                    exp_str = f" ({candidate['years_of_experience']:.1f} år)" if candidate['years_of_experience'] is not None else ""
+                    response += f"  • {candidate['name']}{exp_str}\n"
             
             response += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             response += "\n\nUse search_cvs() to find candidates with specific skills."
+            response += "\nUse get_candidates_metadata() to get detailed info for multiple candidates."
             
             return [TextContent(
                 type="text",
                 text=response
+            )]
+        
+        elif name == "get_candidates_metadata":
+            candidates_input = arguments.get("candidates", [])
+            
+            if not candidates_input:
+                return [TextContent(
+                    type="text",
+                    text="Error: 'candidates' parameter is required (list of candidate names or source filenames)"
+                )]
+            
+            # Get all documents to build lookup maps
+            all_results = indexer.collection.get(
+                include=['metadatas']
+            )
+            
+            # Build lookup maps: name -> metadata, source -> metadata
+            by_name = {}
+            by_source = {}
+            
+            for metadata in all_results['metadatas']:
+                name = metadata.get('cv_name', 'Unknown')
+                source = metadata.get('source', '')
+                
+                # Store first occurrence (all chunks have same metadata)
+                if name not in by_name:
+                    by_name[name] = metadata
+                if source and source not in by_source:
+                    by_source[source] = metadata
+            
+            # Match input candidates
+            found_candidates = []
+            not_found = []
+            
+            for candidate_input in candidates_input:
+                # Try to match by name first
+                matched_meta = None
+                if candidate_input in by_name:
+                    matched_meta = by_name[candidate_input]
+                elif candidate_input in by_source:
+                    matched_meta = by_source[candidate_input]
+                else:
+                    # Try case-insensitive name match
+                    for name, meta in by_name.items():
+                        if name.lower() == candidate_input.lower():
+                            matched_meta = meta
+                            break
+                
+                if matched_meta:
+                    found_candidates.append({
+                        'input': candidate_input,
+                        'name': matched_meta.get('cv_name', 'Unknown'),
+                        'office': matched_meta.get('office', 'Unknown'),
+                        'source': matched_meta.get('source', ''),
+                        'years_of_experience': matched_meta.get('years_of_experience')
+                    })
+                else:
+                    not_found.append(candidate_input)
+            
+            # Format response
+            response_parts = [
+                f"Candidate Metadata ({len(found_candidates)} found)",
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                ""
+            ]
+            
+            for candidate in found_candidates:
+                exp_str = f"{candidate['years_of_experience']:.1f} år" if candidate['years_of_experience'] is not None else "Ikke tilgjengelig"
+                office_str = f" | {candidate['office']}" if candidate['office'] else ""
+                response_parts.extend([
+                    f"• {candidate['name']}{office_str}",
+                    f"  Erfaring: {exp_str}",
+                    f"  Source: {candidate['source']}",
+                    ""
+                ])
+            
+            if not_found:
+                response_parts.extend([
+                    f"⚠️  Not found ({len(not_found)}):",
+                    ", ".join(not_found),
+                    ""
+                ])
+            
+            response_parts.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            
+            return [TextContent(
+                type="text",
+                text="\n".join(response_parts)
             )]
         
         elif name == "get_cv_by_name":

@@ -31,7 +31,7 @@ alwaysApply: true
 
 Dette systemet bruker **embedding-basert semantisk søk**, IKKE keyword-matching!
 
-**✅ GJØR DETTE:** Bruk hele problembeskrivelser fra anbudet som query  
+**✅ GJØR DETTE:** Bruk hele problembeskrivelser fra anbudet som query
 **❌ IKKE GJØR:** Søk etter buzzwords som "[rammeverksnavn]", "[metodikk]"
 
 **Eksempel:**
@@ -82,10 +82,14 @@ Dette er et RAG-system for Bekks CV-database. Du har tilgang til 661 CVer fra fl
 - Du skal anbefale flere kandidater til et anbud
 - Du trenger å se hele databasen
 
+**Returnerer:**
+- Navn, avdeling og **år erfaring** for alle kandidater
+- Gruppert etter avdeling/kontor
+
 **Eksempel:**
 ```
 Bruker: "Hvem har [teknologi]-erfaring?"
-→ Først: list_all_candidates() for oversikt
+→ Først: list_all_candidates() for oversikt (inkl. erfaring)
 → Deretter: search_cvs("[teknologi] erfaring", n_results=15)
 ```
 
@@ -111,7 +115,33 @@ Bruker: "Hvem har [teknologi]-erfaring?"
 - `search_cvs("[teknologi] utvikler", n_results=10, office="Trondheim")` - Kun Trondheim
 - `search_cvs("senior konsulent", n_results=15, office="Management Consulting")` - Kun MC-avdelingen
 
-### 3. `get_cv_by_name(source)`
+### 3. `get_candidates_metadata(candidates)`
+**Bruk når:**
+- Du har en liste med kandidatnavn (f.eks. fra bruker eller fra `list_all_candidates()`)
+- Du trenger raskt å hente **år erfaring, avdeling og source** for flere kandidater samtidig
+- Mye mer effektivt enn å kalle `get_cv_by_name()` flere ganger
+
+**Input:**
+- `candidates`: Liste med kandidatnavn eller source-filnavn (kan blande)
+  - Eksempel: `["Ola Nordmann", "kari-hansen.json", "Per Hansen"]`
+
+**Returnerer:**
+- Navn, avdeling, år erfaring og source for hver kandidat
+- Varsler hvis noen kandidater ikke ble funnet
+
+**Eksempel:**
+```
+Bruker gir deg liste: ["Kari Hansen", "Ola Nordmann", "Per Hansen"]
+→ get_candidates_metadata(["Kari Hansen", "Ola Nordmann", "Per Hansen"])
+→ Får raskt oversikt over erfaring for alle tre uten semantisk søk
+```
+
+**Når skal du bruke dette:**
+- Når brukeren gir deg en liste med kandidater og du trenger å sjekke deres erfaring
+- Når du har filtrert søkeresultater mot en liste og trenger metadata
+- Mye raskere enn å hente full CV for hver kandidat
+
+### 4. `get_cv_by_name(source)`
 **Bruk når:**
 - Brukeren vil vite mer om en spesifikk person
 - Du trenger full CV for anbudsforslag
@@ -123,7 +153,7 @@ search_cvs("[teknologi]") → finner "Kandidat A"
 → get_cv_by_name("kandidat-a.json")
 ```
 
-### 4. `get_cv_stats()`
+### 5. `get_cv_stats()`
 **Bruk når:**
 - Brukeren spør om størrelse på databasen
 - Du trenger å vite hvor mange CVer som er tilgjengelige
@@ -254,6 +284,11 @@ Vurderingskrav (gir poeng):
 - Sjekk at kandidatnavn i søkeresultatene matcher listen med ledige konsulenter
 - Fjern kandidater som IKKE er på listen med ledige konsulenter
 
+**Hent erfaring for filtrerte kandidater:**
+- Når du har en liste med kandidater (enten fra filtrering eller fra søkeresultater), bruk `get_candidates_metadata()` for å raskt hente **år erfaring** uten semantisk søk
+- Dette er mye mer effektivt enn å hente full CV for hver kandidat
+- Eksempel: `get_candidates_metadata(["Kari Hansen", "Ola Nordmann", "Per Hansen"])`
+
 **Analyser søkeresultatene:**
 1. Noter hvilke kandidater scorer HØYEST på vurderingskravene (de med høyest vekt)
 2. Se etter kandidater som dukker opp i FLERE søk
@@ -320,6 +355,11 @@ Kandidat B: 5 års erfaring, 73% match på krav
 → get_cv_by_name("kandidat-c.json")
 ```
 
+**Når du leser full CV, sjekk:**
+- **Senioritetstittel vs. teknisk kompetanse:** Titler som "Konsulent", "Seniorkonsulent", "Manager", "Principal" henviser til års erfaring, ikke til om de utøver eller leder
+- **Faktisk arbeid:** Se på arbeidsoppgaver og teknologier i CV-en - en Manager kan være like operativ som en Konsulent
+- **Ikke anta:** En Manager-tittel betyr ikke automatisk at de har flyttet bort fra hands-on teknisk arbeid - sjekk faktisk innhold i CV-en
+
 ### Steg 7b: Vurder tiltak og CV-omskriving
 
 **VIKTIG:** Vurder om kandidater kan forbedres med små tiltak (<5 dager arbeid) før tilbud sendes.
@@ -352,7 +392,7 @@ CV-ene er ikke nødvendigvis skrevet for dette spesifikke oppdraget. Relevant ko
 
 ### Steg 8: Dobbeltsjekk kvalifiseringskrav
 
-**KRITISK:** Selv om kandidaten scorer høyt på vurderingskrav, MÅ de oppfylle kvalifiseringskravene! 
+**KRITISK:** Selv om kandidaten scorer høyt på vurderingskrav, MÅ de oppfylle kvalifiseringskravene!
 
 **Kvalifiseringskrav kan oppfylles:**
 - Nå (allerede oppfylt i CV-en)

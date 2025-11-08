@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "cv-rag": {
+      "command": "/Users/larsandreassen/Kodeprosjekter/cv-rag-system/venv/bin/python",
+      "args": [
+        "/Users/larsandreassen/Kodeprosjekter/cv-rag-system/mcp_server.py"
+      ],
+      "env": {}
+    }
+  }
+}
+
+
+

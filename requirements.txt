@@ -1,0 +1,19 @@
+# CV-RAG System Dependencies
+
+# Vector Database
+chromadb>=0.4.22
+
+# Embeddings
+sentence-transformers>=2.3.1
+torch>=2.0.0
+numpy<2.0.0
+
+# MCP Protocol
+mcp>=0.1.0
+
+# Utilities
+python-dotenv==1.0.0
+
+# AI Summary Generation
+anthropic>=0.39.0
+

@@ -1,0 +1,794 @@
+---
+alwaysApply: true
+---
+
+# CV-RAG System - Cursor Rules
+
+## 📋 Innholdsfortegnelse
+
+1. [🚨 Kritisk regel: Semantisk søk](#-kritisk-regel-semantisk-søk)
+2. [📊 Systemkontekst](#-systemkontekst)
+3. [🔧 Tilgjengelige funksjoner](#-tilgjengelige-funksjoner)
+4. [💼 Anbudsarbeid - Strukturert workflow](#-anbudsarbeid---strukturert-workflow)
+   - Steg 1: Analyser konkurransegrunnlaget
+   - Steg 2: Søk supplerende informasjon
+   - Steg 3: Dokumenter forståelse og avklar ledige konsulenter
+   - Steg 4: Få oversikt over kandidater
+   - Steg 5: Semantiske søk per krav
+   - Steg 6: Identifiser beste kandidater (inkl. forretningsmessig vurdering)
+   - Steg 7: Hent fullstendige CVer
+   - Steg 7b: Vurder tiltak og CV-omskriving
+   - Steg 8: Dobbeltsjekk kvalifiseringskrav
+   - Steg 9: Presenter anbefalinger
+5. [🔍 Hvordan RAG-søk fungerer](#-hvordan-rag-søk-fungerer)
+6. [🎯 Semantisk søk - Best practices](#-semantisk-søk---best-practices)
+7. [🔎 Søke etter teknologieksperter](#-søke-etter-teknologieksperter-og-seniorer)
+8. [💡 Tips og triks](#-tips-og-triks)
+
+---
+
+## 🚨 KRITISK REGEL: SEMANTISK SØK!
+
+Dette systemet bruker **embedding-basert semantisk søk**, IKKE keyword-matching!
+
+**✅ GJØR DETTE:** Bruk hele problembeskrivelser fra anbudet som query  
+**❌ IKKE GJØR:** Søk etter buzzwords som "[rammeverksnavn]", "[metodikk]"
+
+**Eksempel:**
+- ❌ FEIL: `search_cvs("[rammeverksnavn] [metodikk]")`
+- ✅ RIKTIG: `search_cvs("[hele kravbeskrivelsen fra anbudet om hva kandidaten faktisk skal gjøre og hvilken erfaring som er relevant]")`
+
+Se seksjon "[Semantisk søk - Best practices](#-semantisk-søk---best-practices)" for detaljer.
+
+---
+
+## 📊 Systemkontekst
+
+Dette er et RAG-system for Bekks CV-database. Du har tilgang til 661 CVer fra flere avdelinger og kontorer:
+- **Trondheim** (75 CVer) - Trondheim-kontoret
+- **Teknologi** (461 CVer) - Oslo
+- **Design** (28 CVer) - Oslo
+- **Management Consulting** (24 CVer) - Oslo
+- **Oppdrag** (27 CVer) - Oslo
+
+**Teknisk stack:**
+- **Embedding Model:** multilingual-e5-large (1024D)
+  - Automatisk optimalisert med "query:"/"passage:" prefikser
+  - Normaliserte embeddings for cosine similarity
+  - Støtter 100 språk inkl. norsk/engelsk
+- **Re-ranking:** BGE-reranker-base (cross-encoder)
+  - Aktivert som standard for bedre relevans-scoring
+  - Re-ranker top-50 kandidater fra bi-encoder søk
+  - Gir mer nøyaktige resultater, men litt tregere (~1-6s per søk)
+
+**Tilgang:** Via MCP-serveren `cv-rag`
+
+**Data:**
+- 200+ individuelle teknologier per CV
+- Detaljerte prosjektbeskrivelser med kunde, rolle, og teknologier
+- Key qualifications (strukturerte kompetansebeskrivelser)
+- Arbeidserfaring, utdanning, sertifiseringer
+- **Antall års erfaring** (fra HR-data, strukturert metadata)
+- Persondata: Kun navn, avdeling og erfaring (GDPR-vennlig)
+- Språk: Norsk og engelsk blandet
+
+---
+
+## 🔧 Tilgjengelige funksjoner
+
+### 1. `list_all_candidates()`
+**Bruk når:**
+- Brukeren spør "hvem har vi?" eller vil ha oversikt
+- Du skal anbefale flere kandidater til et anbud
+- Du trenger å se hele databasen
+
+**Eksempel:**
+```
+Bruker: "Hvem har [teknologi]-erfaring?"
+→ Først: list_all_candidates() for oversikt
+→ Deretter: search_cvs("[teknologi] erfaring", n_results=15)
+```
+
+### 2. `search_cvs(query, n_results=12, office=None)`
+**Bruk når:**
+- Du skal finne kandidater med spesifikke ferdigheter
+- Brukeren ber om "kandidater med X erfaring"
+- Du skal bygge et team med visse kompetanser
+
+**Best practices:**
+- Start bred: "[teknologi] og [kompetanseområde] erfaring"
+- Øk n_results hvis brukeren vil ha flere forslag (max 20)
+- Kombinér teknologier: "[teknologi A] [teknologi B] [domene]"
+- Inkluder senioritet hvis relevant: "senior konsulent [teknologi]"
+- **Bruk `office` parameter for å filtrere på lokasjon/avdeling:**
+  - `office="Trondheim"` - Kun Trondheim-kontoret (75 CVer)
+  - `office="Teknologi"`, `office="Design"`, etc. - Spesifikke avdelinger i Oslo
+
+**Eksempler:**
+- `search_cvs("[metodikk] og [kompetanseområde]", n_results=10)`
+- `search_cvs("[sektor] erfaring", n_results=15)`
+- `search_cvs("senior [teknologi] [rolle]", n_results=12)`
+- `search_cvs("[teknologi] utvikler", n_results=10, office="Trondheim")` - Kun Trondheim
+- `search_cvs("senior konsulent", n_results=15, office="Management Consulting")` - Kun MC-avdelingen
+
+### 3. `get_cv_by_name(source)`
+**Bruk når:**
+- Brukeren vil vite mer om en spesifikk person
+- Du trenger full CV for anbudsforslag
+- Du skal sjekke detaljert erfaring
+
+**Eksempel:**
+```
+search_cvs("[teknologi]") → finner "Kandidat A"
+→ get_cv_by_name("kandidat-a.json")
+```
+
+### 4. `get_cv_stats()`
+**Bruk når:**
+- Brukeren spør om størrelse på databasen
+- Du trenger å vite hvor mange CVer som er tilgjengelige
+
+---
+
+## 💼 Anbudsarbeid - Strukturert workflow
+
+### Steg 1: Analyser konkurransegrunnlaget
+
+**Les og forstå kriteriene:**
+1. Identifiser **kvalifiseringskrav** (må-krav som må være oppfylt)
+2. Identifiser **vurderingskrav** (krav som gir poeng/uttelling)
+3. Forstå vektingen: Er noen krav viktigere enn andre? 
+4. Kartlegg hvor oppdraget skal finne sted. 
+- Er det i Trondheim? Da er CV-ene fra trondheimskontoret de eneste som er relevante. 
+- Er det i Oslo? Da er det de andre CV-ene som er relevante. 
+- Er det et annet sted? da er nok ikke oppdraget særlig relevant for Bekk. Gi beskjed om dette i chatten. 
+5. Hva er oppdragets oppstartsdato, varighet og opsjoner. Dette er ikke relevant for vurdering av kandidater, men er greit å vite for personen du samarbeider med for å kartlegge kandidater, så informer personen om dette. 
+
+**Viktig å vite om kvalifiseringskrav:**
+de må bare være oppfylt for at kandidaten skal bli vurdert. Kandidaten blir ikke vurdert på disse direkte. 
+Dette betyr at:  
+- Mer erfaring gir IKKE alltid mer poeng
+- Kandidaten må bare innfri kvalifiseringskravet (f.eks. "5 års erfaring")
+- Fokuser på å treffe best mulig på vurderingskravene. 
+
+**Eksempel:**
+```
+Kvalifiseringskrav (må-krav):
+- Minimum X års erfaring som konsulent
+- Erfaring fra relevant sektor/domene
+- Spesifikk sertifisering eller utdanning
+
+Vurderingskrav (gir poeng):
+- Kompetanseområde 1 (høyest vekt, f.eks. 30%)
+- Kompetanseområde 2 (middels vekt, f.eks. 20%)
+- Referanseprosjekt med lignende oppdrag (lavere vekt, f.eks. 10%)
+- Timepris/kostnad (variabel vekt)
+- Ofte er kravene vektet likt, noen ganger står det eksplisitt hva som er viktig og mindre viktig. Noen ganger står det: "dette kravet blir særskilt vektlagt" uten at det informeres om faktisk vekting. En god kandidat må svare ut tilnærmet alle kravene. 
+```
+
+### Steg 2: Søk supplerende informasjon
+
+**Bruk web_search for å:**
+- Forstå kundens kontekst (hva driver de med?)
+- Finne tidligere anbudsvinninger (hva ser de etter?)
+- Identifisere spesifikke utfordringer i sektoren
+- Forstå teknologi-trender innen domenet
+
+**Eksempel:**
+```
+→ web_search("[Kunde] [prosjekt/domene] strategi utfordringer")
+→ web_search("[kompetanseområde] [sektor] Norge beste praksis")
+```
+
+### Steg 3: Dokumenter forståelse og avklar ledige konsulenter
+
+**KRITISK: Du MÅ gjøre begge delene nedenfor før du fortsetter til Steg 4!**
+
+**1. List opp alle kravene og din forståelse:**
+- Alle kvalifiseringskrav og vurderingskrav
+- Hva som må svares ut i CV-en
+- Hvor oppdraget skal løses (Trondheim/Oslo/annet)
+- Oppdragets oppstartsdato, varighet og opsjoner
+  - *Merk: Dette er ikke relevant for vurdering av kandidater, men informativt for personen du samarbeider med*
+
+**2. SPØR EKSPLISITT om ledige konsulenter:**
+**Du MÅ spørre brukeren:** "Skal jeg vurdere alle kandidater i [Trondheim/Oslo], eller skal jeg kun vurdere de som er ledige akkurat nå?"
+
+**Hvis brukeren svarer "kun ledige":**
+- Be brukeren sende en oppdatert liste med navn på ledige konsulenter
+- **Vent på listen før du fortsetter!**
+- Bruk denne listen til å filtrere søkeresultatene senere (sjekk navn mot søkeresultatene i Steg 6)
+
+**Hvis brukeren svarer "alle kandidater":**
+- Fortsett til Steg 4 med alle kandidater i aktuell by 
+
+
+### Steg 4: Få oversikt over kandidater
+
+```
+→ list_all_candidates()  # Se alle kandidater
+```
+
+### Steg 5: Semantiske søk per krav
+
+**VIKTIG:** Gjør søk per krav, bruk hele kravbeskrivelsen!
+
+**For kvalifiseringskrav:**
+```python
+# Kvalifiseringskrav 1: "X års erfaring med [rolle/kompetanse]"
+→ search_cvs("[rolle] [teknologi] erfaring prosjekter", n_results=20)
+
+# Kvalifiseringskrav 2: "Erfaring fra [sektor/domene]"
+→ search_cvs("prosjekter [sektor] [type kunde] erfaring", n_results=20)
+```
+
+**For vurderingskrav (prioriter disse - de gir poeng!):**
+```python
+# Vurderingskrav 1: "[Hovedkompetanse]" (høyest vekt, f.eks. 30%)
+→ search_cvs(
+    "[Hele kravbeskrivelsen fra anbudet kopiert direkte inn her med "
+    "alle nøkkelord og formuleringer om hva kandidaten faktisk skal gjøre]",
+    n_results=20
+  )
+
+# Vurderingskrav 2: "[Sekundær kompetanse]" (middels vekt, f.eks. 20%)
+→ search_cvs(
+    "[Hele kravbeskrivelsen for dette kravet med alle detaljer "
+    "og nøkkelformuleringer om arbeidsoppgaver og erfaring]",
+    n_results=20
+  )
+
+# Vurderingskrav 3: "Referanseprosjekt" (lavere vekt, f.eks. 10%)
+→ search_cvs(
+    "lignende oppdrag [type prosjekt] [sektor] [teknologier] "
+    "[type kunde] relevant erfaring",
+    n_results=20
+  )
+```
+
+
+### Steg 6: Identifiser beste kandidater
+
+**Filtrer først (hvis relevant):**
+- Hvis du fikk en liste med ledige konsulenter i Steg 3, **filtrer søkeresultatene nå**
+- Sjekk at kandidatnavn i søkeresultatene matcher listen med ledige konsulenter
+- Fjern kandidater som IKKE er på listen med ledige konsulenter
+
+**Analyser søkeresultatene:**
+1. Noter hvilke kandidater scorer HØYEST på vurderingskravene (de med høyest vekt)
+2. Se etter kandidater som dukker opp i FLERE søk
+3. Prioriter kandidater med relevans-score >70%
+4. Lag en shortlist av 5-8 kandidater
+
+**Eksempel notering:**
+```
+Kandidat A:
+- Vurderingskrav 1 (30%): 74.7% match - relevant prosjekt hos [kunde]
+- Vurderingskrav 2 (20%): 72.7% match - erfaring med [kompetanse]
+- Vurderingskrav 3 (10%): 71.4% match - lignende oppdrag
+→ Sterk kandidat! Hent full CV.
+
+Kandidat B:
+- Vurderingskrav 1 (30%): 72.4% match - prosjekt innen [domene]
+- Vurderingskrav 2 (20%): 71.1% match - relevant erfaring
+→ God kandidat! Hent full CV.
+```
+
+**Forretningsmessig vurdering - Erfaring og salgbarhet:**
+
+**VIKTIG PRINSIPP:** Når du vurderer kandidater, ta høyde for deres totale års erfaring og salgbarhet:
+
+**Salgbarhet og erfaring:**
+- **Mer erfaring = mer salgbar:** Konsulenter med mange års erfaring (typisk 10+ år) er salgbare i en bredde av konkurranser og kan brukes i mange typer oppdrag
+- **Mindre erfaring = sjeldnere aktuell:** Konsulenter med færre års erfaring (typisk <5 år) er sjeldnere aktuelle for oppdrag og har færre muligheter
+
+**Forretningsmessig strategi:**
+- **Prioriter kandidater med færre års erfaring** som likevel treffer svært godt på kompetansekravene
+  - Disse har færre muligheter og bør prioriteres når de matcher godt
+  - Dette gir bedre ressursutnyttelse og flere muligheter for alle konsulenter
+- **Spar de mest erfarne** (typisk 10+ år) til strategisk viktige oppdrag
+  - Disse er allikevel salgbare i mange konkurranser
+  - Bruk dem til oppdrag med høy strategisk verdi eller komplekse krav
+
+**Praktisk anvendelse:**
+Når du har flere kandidater som scorer like godt på kompetansekravene:
+1. **Sjekk års erfaring** i metadata (`years_of_experience`) eller i full CV
+2. **Prioriter kandidater med færre års erfaring** (f.eks. 3-7 år) som likevel treffer godt
+3. **Reserver de mest erfarne** (f.eks. 10+ år) til oppdrag som krever høy senioritet eller har strategisk betydning
+4. **Vurder oppdragets karakter:** Er dette et strategisk viktig oppdrag? Da kan de mest erfarne være riktig valg. Er det et mer standard oppdrag? Da kan en mindre erfaren, men godt matchende kandidat være bedre.
+
+**VIKTIG - Forklar valget til brukeren:**
+Når du velger en kandidat med færre års erfaring fremfor en mer erfaren kandidat basert på forretningsmessig vurdering, **må du alltid forklare dette valget eksplisitt til brukeren**. Forklar at den mer erfarne kandidaten teoretisk sett kan være sterkere, men at den mindre erfarne kandidaten likevel treffer svært godt på alle krav og har færre års erfaring totalt, noe som gjør at hen bør prioriteres for dette oppdraget.
+
+**Eksempel:**
+```
+Kandidat A: 12 års erfaring, 75% match på krav
+Kandidat B: 5 års erfaring, 73% match på krav
+
+→ Velg Kandidat B (mindre erfaring, men likevel god match)
+→ Kandidat A er salgbar i mange andre konkurranser og kan brukes til mer strategiske oppdrag
+
+**Forklaring til brukeren:**
+"Jeg tror Kandidat A er den teoretisk sett sterkeste kandidaten, men at det er lurere å tilby Kandidat B fordi hen treffer svært godt på alle krav, og har færre års erfaring totalt. Dette gir bedre ressursutnyttelse og flere muligheter for alle konsulenter."
+```
+
+### Steg 7: Hent fullstendige CVer
+
+```
+→ get_cv_by_name("kandidat-a.json")
+→ get_cv_by_name("kandidat-b.json")
+→ get_cv_by_name("kandidat-c.json")
+```
+
+### Steg 7b: Vurder tiltak og CV-omskriving
+
+**VIKTIG:** Vurder om kandidater kan forbedres med små tiltak (<5 dager arbeid) før tilbud sendes.
+
+**Tiltak som kan vurderes:**
+- Kurs eller sertifisering i spesifikk teknologi
+- Oppfrisking av nærliggende kompetanse
+- Dokumentasjon av eksisterende erfaring som ikke er tydelig i CV-en
+
+**CV-omskriving:**
+CV-ene er ikke nødvendigvis skrevet for dette spesifikke oppdraget. Relevant kompetanse kan ligge "mellom linjene". Før levering av tilbud vil CV-ene skrives om for å bedre treffe kravene. **Ta derfor høyde for at CV-en kan skrives om** i din vurdering.
+
+**Eksempler på relevante tiltak:**
+
+**1. Nærliggende teknologier (kan oppnås med kurs <5 dager):**
+- Erfaring med andre objektorienterte språk → kan ta kurs i ønsket språk
+- Erfaring med lignende meldingstjenester (PubSub/Kafka) → kan lære spesifikk teknologi
+
+**2. Tilsvarende problematikk fra annet faglig perspektiv:**
+
+| Kompetanseområde | Design | Utvikling | Forretning |
+|-----------------|--------|-----------|------------|
+| **Brukerinnsikt og behov** | Brukerundersøkelser, innsiktsfase, discovery | User stories, requirements gathering | Behovsanalyse, kundeinnsikt, customer insights |
+| **Strukturering av løsningen** | Informasjonsarkitektur, systemdesign | System architecture, solution design | Operating model, organisasjonsdesign, capability map |
+| **Verdiskaping** | Value proposition design, service design | Feature prioritization, value stream | Forretningsmodell, business model canvas |
+| **Iterativ utvikling** | Prototyping, design iterations | Sprints, agile development, MVP | Piloter, proof of concept, faseinndeling |
+| **Prosessflyt** | User journey, service blueprint | Process flow, workflow | Verdikjede, prosessmodellering, customer journey |
+| **Måloppnåelse** | Success metrics, design KPIs | Definition of done, acceptance criteria | KPIs, målkart, business objectives |
+
+
+### Steg 8: Dobbeltsjekk kvalifiseringskrav
+
+**KRITISK:** Selv om kandidaten scorer høyt på vurderingskrav, MÅ de oppfylle kvalifiseringskravene! 
+
+**Kvalifiseringskrav kan oppfylles:**
+- Nå (allerede oppfylt i CV-en)
+- Etter mindre enn 5 dagers tiltak (kurs, sertifisering, etc. - se Steg 7b) 
+
+**Sjekk i full CV:**
+- [ ] Har kandidaten minimum X års erfaring?
+- [ ] Har kandidaten erfaring fra riktig sektor?
+- [ ] Oppfyller kandidaten alle må-krav?
+
+**Hvis NEI:** Fjern kandidaten fra listen, selv om score er høy!
+
+### Steg 9: Presenter anbefalinger
+
+**Strukturer presentasjonen:**
+
+**For hver kandidat:**
+1. **Navn og rolle** (med avdeling)
+2. **Kvalifiseringskrav:** Dokumenter at de er oppfylt
+3. **Vurderingskrav:** Beskriv matchende erfaring per krav
+4. **Referanseprosjekt:** Fremhev mest relevant prosjekt
+5. **Hvorfor passer kandidaten:** Konkret begrunnelse koblet til anbudet
+
+**Eksempel:**
+```
+## [Kandidatnavn] - [Rolle] (Trondheim)
+
+### Kvalifiseringskrav ✅
+- X års erfaring som [rolle]
+- Omfattende erfaring fra [relevant sektor/domene]
+- [Andre kvalifiseringskrav oppfylt]
+
+### Vurderingskrav (matcher godt)
+**[Hovedkompetanse] (30%):**
+[Kandidat] ledet [prosjekt] hos [kunde] hvor [hen] [konkret relevant arbeid
+som matcher kravbeskrivelsen]. Dette matcher direkte det som etterspørres 
+i anbudet.
+
+**[Sekundær kompetanse] (20%):**
+Erfaring med [relevant arbeid] fra [kunde/prosjekt], inkludert arbeid med
+[spesifikke oppgaver som matcher kravet].
+
+**Referanseprosjekt (10%):**
+[Prosjektnavn] hos [kunde] er direkte sammenlignbart med anbudets behov.
+
+### Hvorfor [kandidat] passer:
+[Hen] har demonstrert evne til [nøkkelkompetanser fra anbudet], som matcher
+direkte det kunden etterspør i konkurransegrunnlaget.
+```
+
+---
+
+## 🔍 Hvordan RAG-søk fungerer
+
+### Søkeprosess
+
+1. **Bi-encoder søk:** multilingual-e5-large finner top-50 kandidater basert på semantisk likhet
+2. **Re-ranking:** BGE-reranker-base scorer de 50 kandidatene på nytt for bedre relevans
+3. **Resultat:** Returnerer top-k (standard 12) med høyest relevans-score
+
+**Ytelse:**
+- Søketid: ~1-6s per søk (pga. re-ranking)
+- Kvalitet: Bedre relevans-scoring enn kun bi-encoder
+- Re-ranking scores: 0.7+ for relevante kandidater
+
+### `search_cvs()` returnerer KORTE utdrag:
+- Hvert resultat er **maks 400 tegn** (for å unngå token-overload)
+- Du får nok info til å identifisere relevante kandidater
+- Hvis du trenger mer detaljer → bruk `get_cv_by_name()`
+
+### Eksempel på søkeresultat:
+```
+[1] [Kandidatnavn] | [Kontor] (Re-ranking score: 0.85)
+    Kilde: [filnavn].json | Chunk [X/Y]
+
+[Kandidatnavn] er en erfaren [rolle/beskrivelse] med kompetanse innen 
+[teknologi(er)/fagområde(r)]. Har erfaring fra [bransje/sektor/prosjekttype]
+og har jobbet med [relevante oppgaver eller teknologier].
+```
+
+### Workflow for detaljert info:
+1. **Søk bredt** → få oversikt over kandidater
+2. **Identifiser** → plukk ut 2-3 mest relevante
+3. **Hent full CV** → `get_cv_by_name()` for detaljer
+4. **Skriv anbefaling** → basert på full CV-data
+
+---
+
+## 🎯 Semantisk søk - Best practices
+
+RAG-systemet bruker **semantisk søk** (embedding-basert), IKKE keyword-matching!
+
+### ✅ **RIKTIG tilnærming (konseptuell):**
+
+Bruk **hele problembeskrivelsen** fra anbudet som query:
+
+```python
+# Eksempel: Anbud med spesifikk kravbeskrivelse
+search_cvs(
+  "[Hele kravbeskrivelsen fra anbudet kopiert direkte, inkludert "
+  "alle nøkkelformuleringer om arbeidsoppgaver, erfaring, og hva "
+  "kandidaten faktisk skal gjøre i oppdraget]",
+  n_results=20
+)
+```
+
+**Hvorfor dette fungerer:**
+- Embedding-modellen (`multilingual-e5-large`) finner **konseptuelt lignende arbeid**
+- Kandidater som har *gjort* dette arbeidet (selv med andre ord) vil score høyt
+- Du finner folk med relevant erfaring, ikke bare riktige buzzwords
+- Re-ranking forbedrer relevans-scoringen ytterligere
+
+### ❌ **FEIL tilnærming (keyword):**
+
+```python
+# DÅRLIG: Søker kun etter spesifikke buzzwords
+search_cvs("[rammeverk] [metodikk]", n_results=10)
+```
+
+**Hvorfor dette feiler:**
+- Finner kun CVer som inneholder akkurat disse ordene
+- Går glipp av kandidater som har gjort tilsvarende arbeid uten å bruke akkurat disse ordene
+- Keyword-søk er det MOTSATTE av semantisk søk!
+
+### 📋 **Praktiske eksempler:**
+
+#### Scenario 1: Konsulent med spesifikk metodikk
+```python
+# DÅRLIG (keyword):
+search_cvs("[metodikk] [rammeverk] [sertifisering]", n_results=10)
+
+# BRA (semantisk):
+search_cvs(
+  "[arbeidsoppgaver fra kravbeskrivelsen] etablere [prosesser] og "
+  "[løsninger] [type arbeid] mellom [systemer/enheter] sikre samsvar "
+  "med [regelverk] implementere [type løsning]",
+  n_results=20
+)
+```
+
+#### Scenario 2: Teknisk spesialist for spesifikt domene
+```python
+# DÅRLIG (keyword):
+search_cvs("[teknologi A] [teknologi B] [sektor]", n_results=10)
+
+# BRA (semantisk):
+search_cvs(
+  "[type løsning] for [sektor] modernisering av [legacy systemer] "
+  "til [moderne plattformer] sikkerhet og [compliance-krav] "
+  "erfaring fra [type organisasjoner]",
+  n_results=20
+)
+```
+
+#### Scenario 3: Integrasjonsansvarlig for spesifikk sektor
+```python
+# DÅRLIG (keyword):
+search_cvs("[teknologi] [protokoll] integrasjon", n_results=10)
+
+# BRA (semantisk):
+search_cvs(
+  "integrasjon mellom [type systemer] i [sektor] modernisering av "
+  "legacy integrasjoner [type arbeid] for datadeling mellom [enheter] "
+  "erfaring med [relevante systemer og plattformer]",
+  n_results=20
+)
+```
+
+### 🎯 **Beste praksis:**
+
+1. **Les anbudsdokumentet grundig**
+2. **Plukk ut nøkkelformuleringer** om hva de faktisk skal *gjøre*
+3. **Bruk hele setninger** fra anbudet som query
+4. **Kombiner flere søk** med ulike vinklinger:
+   - Ett søk om arbeidsoppgaver
+   - Ett søk om domenekunnskap
+   - Ett søk om teknisk kompetanse
+5. **Sammenlign resultatene** og identifiser kandidater som dukker opp i flere søk
+
+### 💡 **Når skal du bruke keyword vs. semantisk?**
+
+**Keyword (spesifikke termer):**
+- Når du søker etter spesifikke teknologier: "[teknologi A]", "[teknologi B]"
+- Når du søker etter sertifiseringer: "[sertifisering A]", "[sertifisering B]"
+- Når du søker etter konkrete kundenavn: "[kunde A]", "[kunde B]"
+
+**Semantisk (konseptuell):**
+- Når du søker etter **type arbeid**: "[arbeidstype A]", "[arbeidstype B]"
+- Når du søker etter **kompetanseområder**: "[kompetanse A]", "[kompetanse B]"
+- Når du skal matche mot **anbudsbeskrivelser** (ALLTID!)
+
+### 🔍 **Testing av søk:**
+
+Hvis du får **for få** eller **feil** resultater:
+1. ❌ **IKKE** gjør søket mer spesifikt (keyword-felle!)
+2. ✅ **GJØR** søket mer beskrivende (mer kontekst)
+3. ✅ Prøv flere semantiske søk fra ulike vinkler
+4. ✅ Øk `n_results` til 20 for å se bredere
+
+### 📝 Quick reference: Søketips
+
+**⭐ BEST - Semantiske søk (konseptbasert):**
+- ✅ "[hele kravbeskrivelsen om arbeidsoppgaver og type arbeid som skal utføres i oppdraget]"
+- ✅ "[beskrivelse av erfaring og kompetanse fra konkurransegrunnlaget med fokus på hva kandidaten skal gjøre]"
+- ✅ "[type løsning] for [sektor] modernisering av [systemer] [kompetanseområde] og [andre krav]"
+- ✅ "integrasjon mellom [type systemer] i [sektor] [type arbeid] for [formål]"
+
+**👍 BRA - Hybrid (konsept + spesifikke termer):**
+- ✅ "Senior konsulent med [teknologi] erfaring fra [sektor]"
+- ✅ "[kompetanseområde 1] og [kompetanseområde 2] [spesifikk metodikk] erfaring"
+- ✅ "[teknologi 1] [teknologi 2] [type arbeid] [domene]"
+- ✅ "[rolle] [teknologi A] [teknologi B] [spesifikt krav]"
+
+**👎 DÅRLIGE - Kun keyword:**
+- ❌ "[spesifikt rammeverk]" (misser alle uten akkurat dette ordet!)
+- ❌ "[enkelt teknologinavn]" (for bredt, lite kontekst)
+- ❌ "[metodikk]" (misser alle som GJØR dette uten å bruke ordet)
+- ❌ "[kun senioritet]" (kun nivå, ingen kontekst om hva)
+
+---
+
+## 🔎 Søke etter teknologieksperter og seniorer
+
+### Utfordring: Chunking kan splitte erfaring
+CVer er delt i "chunks" (400 tegn) for indeksering. Dette betyr at:
+- En konsulent med mange års erfaring kan ha teknologien nevnt i chunk 1, men senioritet og dype prosjekter i chunk 4-8
+- Keyword-søk på "[teknologi]" kan gi høy score på juniorere som har teknologien høyt i CV-en
+- Seniorer med omfattende erfaring kan score lavere fordi deres beste prosjekter er spredt over flere chunks
+- **Re-ranking hjelper:** BGE-reranker scorer hele query-dokument par, ikke bare chunks, og gir bedre relevans for seniorer
+
+### ✅ Beste praksis for å finne ekte eksperter:
+
+**1. Søk BREDT og ØK antall resultater:**
+```python
+# IKKE gjør dette (for smalt):
+search_cvs("[teknologi]", n_results=5)
+
+# Gjør dette i stedet:
+search_cvs(
+  "erfaren arkitekt med [teknologi] erfaring, utviklet komplekse løsninger "
+  "med [teknologi], mange års erfaring, [relaterte teknologier], "
+  "arkitektur og design",
+  n_results=15-20
+)
+```
+
+**2. Kombiner søk fra flere vinkler:**
+```python
+# Søk 1: Teknisk dybde
+search_cvs(
+  "[teknologi] arkitektur, [teknologi] utvikling, komplekse løsninger, "
+  "[relaterte teknologier], design patterns, beste praksis",
+  n_results=20
+)
+
+# Søk 2: Senioritet og erfaring
+search_cvs(
+  "erfaren konsulent, arkitekt, teknisk ansvarlig, leder, modernisering, "
+  "omfattende erfaring [teknologi]",
+  n_results=20
+)
+
+# Søk 3: Spesifikke domenekrav
+search_cvs(
+  "[teknologi] i [sektor/domene], integrasjon med [systemer], "
+  "[type prosjekter], [spesifikke utfordringer]",
+  n_results=20
+)
+```
+
+**3. Se etter OVERLAPP i resultater:**
+- Kandidater som dukker opp i FLERE søk er ofte de beste
+- Høy score i kun ÉTT søk kan bety at teknologien tilfeldigvis var i chunk 1
+- Konsistent tilstedeværelse i flere søk = dypere erfaring
+- **Re-ranking scores** (0.7+) indikerer sterk relevans
+
+**4. ALLTID hent full CV for de mest lovende:**
+```python
+# Etter å ha identifisert 3-5 kandidater:
+get_cv_by_name("[kandidat-1].json")
+get_cv_by_name("[kandidat-2].json")
+get_cv_by_name("[kandidat-3].json")
+
+# Sjekk i full CV:
+# - Hvor mange prosjekter med teknologien?
+# - Hvilke roller (utvikler vs. arkitekt vs. teknisk ansvarlig)?
+# - Hvor mange års erfaring totalt?
+# - Kompleksitet i prosjektene?
+```
+
+**5. Kombiner med `list_all_candidates()` ved viktige søk:**
+```python
+# Får oversikt over ALLE kandidater med avdeling
+list_all_candidates()
+
+# Deretter målrettet søk:
+search_cvs("[detaljert søk basert på oversikt]", n_results=20)
+```
+
+### 🎯 Eksempel: Finne de beste teknologiekspertene
+
+**Scenario:** Finn de 5 beste konsulentene med erfaring innen [teknologi]
+
+**Steg 1:** Få oversikt
+```python
+list_all_candidates()  # Se hvem som finnes
+```
+
+**Steg 2:** Søk bredt fra flere vinkler
+```python
+# Teknisk dybde:
+search_cvs(
+  "[teknologi] arkitektur utvikler erfaren komplekse løsninger "
+  "[relaterte teknologier] modernisering design patterns",
+  n_results=20
+)
+
+# Senioritet:
+search_cvs(
+  "arkitekt teknisk ansvarlig [teknologi] leder team mange år "
+  "omfattende erfaring senior konsulent",
+  n_results=20
+)
+
+# Domenespesifikt (hvis relevant):
+search_cvs(
+  "[teknologi] [sektor/domene] integrasjon [type systemer] "
+  "[spesifikke utfordringer] [compliance/krav]",
+  n_results=20
+)
+```
+
+**Steg 3:** Identifiser overlapp
+- Noter hvilke kandidater dukker opp i FLERE søk
+- Høyere score i flere søk = sterkere kandidat
+- Sjekk re-ranking scores (0.7+ = høy relevans)
+
+**Steg 4:** Hent fulle CVer
+```python
+get_cv_by_name("[kandidat-a].json")
+get_cv_by_name("[kandidat-b].json")
+get_cv_by_name("[kandidat-c].json")
+# ... osv
+```
+
+**Steg 5:** Analyser dybde i full CV
+- Tell antall prosjekter med teknologien
+- Vurder kompleksitet og roller
+- Sjekk totale års erfaring
+- Noter spesifikke domener og bransjer
+
+**Steg 6:** Ranger basert på:
+1. **Bredde:** Antall prosjekter med teknologien
+2. **Dybde:** Kompleksitet og ansvarsnivå (utvikler < arkitekt < teknisk ansvarlig)
+3. **Senioritet:** Totale års erfaring
+4. **Relevans:** Match mot spesifikke krav (sektor, integrasjoner, etc.)
+
+### ⚠️ Fallgruver å unngå:
+
+❌ **Stole kun på første søk med 5 resultater**
+- Kan misse seniorer med spredt erfaring
+
+❌ **Anta at høy score = beste kandidat**
+- Score reflekterer match mot ÉN chunk, ikke hele CV-en
+- Re-ranking hjelper, men full CV gir best oversikt
+
+❌ **Søke kun på teknologinavn uten kontekst**
+- Gir for generiske resultater
+
+❌ **Ikke hente fulle CVer før rangering**
+- Korte utdrag (400 tegn) gir ikke nok info for å vurdere senioritet
+
+✅ **Gjør i stedet:**
+- Søk bredt (15-20 resultater)
+- Kombiner flere søk
+- Se etter overlapp
+- Hent ALLTID full CV før endelig rangering
+
+---
+
+## 💡 Tips og triks
+
+### Husk
+
+- **Start bred:** `list_all_candidates()` ved store spørsmål → oversikt
+- **Søk smart:** Bruk 12-20 resultater for å få flere alternativer
+- **Gå i dybden:** Bruk `get_cv_by_name()` for full CV når du trenger detaljer
+- **Ikke anta:** Søkeresultater er korte utdrag (400 tegn). Hent full CV for nøyaktig info.
+- **Begrunn:** Alltid forklar hvorfor en kandidat passer til oppdraget
+
+### Pro tips
+
+#### For brede spørsmål:
+```
+Bruker: "Hvem har [type erfaring]?"
+→ list_all_candidates()  # Oversikt
+
+# Semantisk søk (best):
+→ search_cvs(
+    "[type løsning] [plattformer] modernisering til [teknologi] 
+     [type arbeid] [verktøy] [metodikk]",
+    n_results=20
+  )
+
+# Hybrid søk (ok):
+→ search_cvs("[teknologi A] [teknologi B] [teknologi C] erfaring [type arbeid]", n_results=20)
+
+→ Presenter topp 5-8 kandidater med begrunnelse basert på relevant erfaring
+```
+
+#### For spesifikke anbud:
+```
+Bruker: "X konsulenter til [prosjekt/oppdrag]"
+
+# Les anbudsdokumentet først! Bruk faktiske arbeidsoppgaver:
+→ search_cvs(
+    "[arbeidsoppgaver fra kravbeskrivelsen] [type løsning] 
+     [teknologier] sikkerhet og [compliance-krav] erfaring fra 
+     [type organisasjoner]",
+    n_results=20
+  )
+
+→ search_cvs(
+    "[rolle] [domene] [type arbeid] [samarbeidsform]
+     erfaring med [type enheter eller organisasjoner]",
+    n_results=20
+  )
+
+→ Identifiser kandidater som scorer høyt i begge søk
+→ get_cv_by_name() for de mest lovende
+→ Skriv pitch basert på hvordan deres erfaring matcher anbudets behov
+```
+
+#### Når du er usikker:
+- **Søk SEMANTISK først** → bruk problembeskrivelser, ikke buzzwords
+- **Kombiner flere søk** → ulike vinkler på samme problem
+- **Se etter overlap** → kandidater i flere søk er ofte best match
+- **Hent full CV** → ikke stol kun på korte utdrag for anbefalinger
+- **Sjekk re-ranking scores** → 0.7+ indikerer høy relevans
